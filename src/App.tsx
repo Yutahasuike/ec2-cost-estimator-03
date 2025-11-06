@@ -1,4 +1,20 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+
+type InstanceSpec = {
+  vcpu: number;
+  memoryGiB: number;
+  note?: string;
+};
+
+// ✅ t3 ファミリーの代表的な仕様（必要に応じて追記可）
+const INSTANCE_SPECS: Record<string, InstanceSpec> = {
+  "t3.micro":   { vcpu: 2, memoryGiB: 1,  note: "バースト可能（CPUクレジット）。軽量Web/開発向け" },
+  "t3.small":   { vcpu: 2, memoryGiB: 2,  note: "小規模アプリ/軽量API" },
+  "t3.medium":  { vcpu: 2, memoryGiB: 4,  note: "小〜中規模アプリ/検証環境" },
+  "t3.large":   { vcpu: 2, memoryGiB: 8,  note: "中規模API/バッチの軽負荷" },
+  "t3.xlarge":  { vcpu: 4, memoryGiB: 16, note: "中規模アプリ/同時接続多め" },
+  "t3.2xlarge": { vcpu: 8, memoryGiB: 32, note: "重めの検証/並列処理" },
+};
 
 function App() {
   const [instanceType, setInstanceType] = useState("t3.micro");
@@ -13,11 +29,12 @@ function App() {
     "t3.large", "t3.xlarge", "t3.2xlarge",
   ];
 
-  // ✅ 環境変数名を VITE_API_BASE_URL に統一（Amplify 側も同じキーで設定）
+  // ✅ 選択中タイプの仕様を取得（なければ undefined）
+  const selectedSpec = useMemo(() => INSTANCE_SPECS[instanceType], [instanceType]);
+
+  // ✅ 環境変数（Amplify Hosting で VITE_API_BASE_URL を設定）
   const API_BASE = import.meta.env.VITE_API_BASE_URL as string | undefined;
   if (!API_BASE) {
-    // ビルド時に埋め込まれるので、未設定なら起動直後に気づけるようにする
-    // （Amplify Hosting → 環境変数 で VITE_API_BASE_URL を設定して再デプロイ）
     throw new Error("VITE_API_BASE_URL が設定されていません。Amplify の環境変数を確認してください。");
   }
 
@@ -26,17 +43,14 @@ function App() {
     setResult(null);
     setLoading(true);
     try {
-      // ✅ HTTP API v2 の既存ルートに合わせる（/estimate）
       const url = `${API_BASE}/estimate`;
-
-      // Lambda 側が期待しているキーを送る（region, currency を明示）
       const payload = {
         instanceType,
         region: "ap-northeast-1",
         currency: "JPY",
-        hours,           // 1日あたり稼働時間
-        storageGB: storage, // フィールド名の揺れに備えて storageGB も使う
-        storage,         // 既存の実装が storage を見ている可能性にも配慮
+        hours,
+        storageGB: storage,
+        storage,
       };
 
       const res = await fetch(url, {
@@ -45,7 +59,6 @@ function App() {
         body: JSON.stringify(payload),
       });
 
-      // API Gateway + Lambda(Proxy) の場合、{statusCode, body} の形もあり得る
       const raw = await res.json().catch(() => ({}));
       const body = typeof raw?.body === "string" ? JSON.parse(raw.body) : raw;
 
@@ -73,6 +86,24 @@ function App() {
           ))}
         </select>
       </div>
+
+      {/* ✅ スペック表示 */}
+      {selectedSpec && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: "8px 12px",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            background: "#fafafa",
+            lineHeight: 1.6,
+          }}
+        >
+          <b>選択中のスペック</b><br />
+          vCPU：{selectedSpec.vcpu} / メモリ：{selectedSpec.memoryGiB} GiB
+          {selectedSpec.note && <div style={{ opacity: 0.8, marginTop: 4 }}>補足：{selectedSpec.note}</div>}
+        </div>
+      )}
 
       <div style={{ marginTop: 12 }}>
         <label>リージョン：</label> <span>ap-northeast-1（東京）</span>
@@ -108,7 +139,6 @@ function App() {
       {result && (
         <div style={{ marginTop: 24, padding: 12, border: "1px solid #ddd" }}>
           <h2>結果</h2>
-          {/* 受け取る JSON のキー名は Lambda 側に合わせて適宜変更 */}
           <p>インスタンスタイプ：{result.instanceType ?? instanceType}</p>
           <p>ストレージ：{result.storageGB ?? storage} GB（gp3）</p>
           {result.exchangeRate && <p>為替レート：{result.exchangeRate} 円 / USD</p>}
